@@ -27,7 +27,7 @@ A modular, educational implementation of transformer layers, attention mechanism
 ## Getting Started
 
 1. **Clone the repository:**
-git clone https://github.com/yourusername/numpy-transformer-attention.git
+git clone [https://github.com/yourusername/numpy-transformer-attention.git](https://github.com/Arulrana31/transformer-from-scratch.git)
 cd numpy-transformer-attention
 
 2. **Install dependencies:**
