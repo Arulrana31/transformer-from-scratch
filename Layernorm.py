@@ -1,20 +1,36 @@
 import numpy as np
 
-
 class LayerNorm:
     def __init__(self, epsilon=1e-5):
+        """
+        Initialize a LayerNorm instance.
+
+        Args:
+            epsilon (float): Small constant added to variance to avoid division by zero.
+        """
         self.epsilon = epsilon
 
-        self.beta = None
-        self.gamma = None
-        self.cache = None
+        # Learnable parameters
+        self.beta = None # Shift parameter
+        self.gamma = None # Shift parameter
+
+        # Adam variables
         self.t = None
         self.m_beta = None
         self.m_gamma = None
         self.v_beta = None
         self.v_gamma = None
 
-    def LayerNorm_initialize(self, embed_dimension):
+    def initialize(self, embed_dimension):
+        """
+        Initialize learnable parameters and optimizer states.
+
+        Args:
+            embed_dimension (int): The dimensionality of the input embeddings.
+        """
+        if not isinstance(embed_dimension, int) or embed_dimension <= 0:
+            raise ValueError("embed_dimension must be a positive integer")
+
         self.gamma = np.ones((embed_dimension, 1), dtype=np.float64)
         self.beta = np.zeros((embed_dimension, 1), dtype=np.float64)
 
@@ -25,7 +41,21 @@ class LayerNorm:
 
         self.t = 0
 
-    def LayerNorm_compute(self, X):
+    def compute(self, X):
+        """
+        Perform the forward pass of layer normalization.
+
+        Args:
+            X (np.ndarray): Input array of shape (D, N) where D is dimension and N is number of samples.
+
+        Returns:
+            np.ndarray: Normalized and scaled output.
+        """
+        if not isinstance(X, np.ndarray):
+            raise TypeError("X must be a numpy ndarray")
+        if self.gamma is None or self.beta is None:
+            raise ValueError("LayerNorm must be initialized before calling compute")
+
         mean = np.mean(X, axis=0, keepdims=True)  # (1, num_samples)
         variance = np.var(X, axis=0, keepdims=True)  # (1, num_samples)
 
@@ -35,7 +65,24 @@ class LayerNorm:
 
         return Y
 
-    def LayerNorm_Backprop(self, X, delta):
+    def backprop(self, X, delta):
+        """
+        Perform the backward pass and compute gradients.
+
+        Args:
+            X (np.ndarray): Input to the layer of shape (D, N).
+            delta (np.ndarray): Gradient from the next layer.
+
+        Returns:
+            tuple: Gradients with respect to input, gamma, and beta.
+        """
+        if not isinstance(X, np.ndarray) or not isinstance(delta, np.ndarray):
+            raise TypeError("X and delta must be numpy ndarrays")
+        if X.shape != delta.shape:
+            raise ValueError("X and delta must have the same shape")
+        if self.gamma is None or self.beta is None:
+            raise ValueError("LayerNorm must be initialized before calling backprop")
+
         mean = np.mean(X, axis=0, keepdims=True)
         variance = np.var(X, axis=0, keepdims=True)
 
@@ -60,7 +107,7 @@ class LayerNorm:
 
         return d_X, d_gamma, d_beta
 
-    def LayerNorm_Update(
+    def update(
             self,
             X,  # List/array of input samples (column vectors)
             delta,
@@ -71,7 +118,26 @@ class LayerNorm:
             l2_lambda=0.01,
             reg="L2",
     ):
-        d_X, d_gamma, d_beta = self.LayerNorm_Backprop(X, delta)
+        """
+        Update the parameters using the Adam optimizer.
+
+        Args:
+            X (np.ndarray): Input data.
+            delta (np.ndarray): Gradient from next layer.
+            learning_rate (float): Learning rate.
+            beta1 (float): Decay rate for first moment estimate in Adam.
+            beta2 (float): Decay rate for second moment estimate in Adam.
+            epsilon (float): Small constant for numerical stability in Adam.
+            l2_lambda (float): Regularization strength.
+            reg (str): Type of regularization ('L2' or None).
+
+        Returns:
+            np.ndarray: Gradient with respect to input.
+        """
+        if self.gamma is None or self.beta is None:
+            raise ValueError("LayerNorm must be initialized before calling update")
+
+        d_X, d_gamma, d_beta = self.backprop(X, delta)
         # L2 regularization
         if reg == "L2":
             d_gamma += l2_lambda * self.gamma

@@ -4,52 +4,51 @@ from Functions import function
 
 class AttentionHead:
     def __init__(self, embed_dimension, output_dimension):
+        """
+        Initializes an AttentionHead.
+
+        Args:
+            embed_dimension (int): Input embedding size (d_model).
+            output_dimension (int): Output size per head (typically d_model / num_heads).
+        """
         self.embed_dimension = embed_dimension
-        self.number_embeds = None
         self.output_dimension = output_dimension
         self.maxlen = 512
-        self.pe = self.positional_encoding()
 
-        self.w_q = None
-        self.w_k = None
-        self.w_v = None
-        self.beta_q_vector = None
-        self.beta_k_vector = None
-        self.beta_v_vector = None
+        self.number_embeds = None
+        self.pe = self._init_positional_encoding()
+
+        self.w_q = self.w_k = self.w_v = None
+        self.beta_q_vector = self.beta_k_vector = self.beta_v_vector = None
+
+        self.t = 0
+        self._init_optimizer_states()
+
         self.output = None
 
-        self.t = None
-        self.m_w_q = None
-        self.m_w_k = None
-        self.m_w_v = None
-        self.m_beta_q = None
-        self.m_beta_k = None
-        self.m_beta_v = None
-        self.v_w_q = None
-        self.v_w_k = None
-        self.v_w_v = None
-        self.v_beta_q = None
-        self.v_beta_k = None
-        self.v_beta_v = None
+    def _init_optimizer_states(self):
+        """
+        Initializes the optimizer states elsewhere to avoid clutter.
+        """
+        self.m_w_q = self.v_w_q = None
+        self.m_w_k = self.v_w_k = None
+        self.m_w_v = self.v_w_v = None
+        self.m_beta_q = self.v_beta_q = None
+        self.m_beta_k = self.v_beta_k = None
+        self.m_beta_v = self.v_beta_v = None
 
-    def initialize_attention(self):
+    def initialize(self):
 
         d = self.embed_dimension
         d_ = self.output_dimension
 
-        w_q = np.random.randn(d_, d)
-        w_k = np.random.randn(d_, d)
-        w_v = np.random.randn(d_, d)
-        self.w_q = w_q
-        self.w_k = w_k
-        self.w_v = w_v
+        self.w_q = np.random.randn(d_, d)
+        self.w_k = np.random.randn(d_, d)
+        self.w_v = np.random.randn(d_, d)
 
-        beta_q_vector = np.random.randn(d_, 1)
-        beta_k_vector = np.random.randn(d_, 1)
-        beta_v_vector = np.random.randn(d_, 1)
-        self.beta_q_vector = beta_q_vector
-        self.beta_k_vector = beta_k_vector
-        self.beta_v_vector = beta_v_vector
+        self.beta_q_vector = np.random.randn(d_, 1)
+        self.beta_k_vector = np.random.randn(d_, 1)
+        self.beta_v_vector = np.random.randn(d_, 1)
 
         self.m_w_q = np.zeros_like(self.w_q)
         self.v_w_q = np.zeros_like(self.w_q)
@@ -67,18 +66,39 @@ class AttentionHead:
 
         self.t = 0
 
-    def positional_encoding(self):
+    def _init_positional_encoding(self) -> np.ndarray:
+        """
+        Generates sinusoidal positional encoding matrix.
+
+        Returns:
+            np.ndarray: A matrix of shape (embed_dimension, maxlen).
+        """
         position = np.arange(self.maxlen)[:, np.newaxis]
         div_term = np.exp(np.arange(0, self.embed_dimension, 2) *
                           (-np.log(10000.0) / self.embed_dimension))  # [d_model//2]
 
         pe = np.zeros((self.maxlen, self.embed_dimension))  # [max_len, d_model]
         pe[:, 0::2] = np.sin(position * div_term)  # even indices
-        pe[:, 1::2] = np.cos(position * div_term)  # odd indices
+        pe[:, 1::2] = np.cos(position * div_term[:pe.shape[1] // 2]) # odd indices
 
         return pe.T  # [d_model, max_len]
 
-    def compute_attention(self, X, switch=0, position=True, mask=True):
+    def compute(self, X: np.ndarray, switch=0, position=True, mask=True):
+        """
+        Computes the self-attention output.
+
+        Args:
+            X (np.ndarray): Input tensor of shape (embed_dimension, sequence_length).
+            switch (int): If 1, returns intermediate values for backprop.
+            position (bool): Whether to add positional encoding.
+            mask (bool): Whether to apply causal mask.
+
+        Returns:
+            np.ndarray or tuple: Output tensor or tuple with intermediate results.
+        """
+        if X.shape[0] != self.embed_dimension:
+            raise ValueError("Input dimension does not match embed_dimension")
+
         self.number_embeds = X.shape[1]
         n = self.number_embeds
 
@@ -88,15 +108,15 @@ class AttentionHead:
         else:
             X_pos = X
 
-        Q = np.dot(self.w_q, X_pos) + np.tile(self.beta_q_vector, (1, n))
-        K = np.dot(self.w_k, X_pos) + np.tile(self.beta_k_vector, (1, n))
-        V = np.dot(self.w_v, X) + np.tile(self.beta_v_vector, (1, n))
+        Q = np.dot(self.w_q, X_pos) + np.tile(self.beta_q_vector, (1, self.number_embeds))
+        K = np.dot(self.w_k, X_pos) + np.tile(self.beta_k_vector, (1, self.number_embeds))
+        V = np.dot(self.w_v, X) + np.tile(self.beta_v_vector, (1, self.number_embeds))
 
         dot_product = np.dot(Q.T, K) / np.sqrt(self.output_dimension)  # nxn
 
         if mask:
             mask_matrix = np.tri(n, dtype=bool)  # Lower-triangular boolean matrix (n × n)
-            mask_matrix = np.where(mask_matrix, 0, -np.inf)
+            mask_matrix = np.where(mask_matrix, 0, -np.inf) # Upper triangle becomes minus infinity
             dot_product = mask_matrix + dot_product
 
         soft_dot_product = np.zeros(dot_product.shape)
@@ -115,9 +135,19 @@ class AttentionHead:
         else:
             return Sa
 
-    def attention_backprop(self, delta, X):
+    def backprop(self, delta: np.ndarray, X: np.ndarray):
+        """
+        Backward pass through the attention head.
+
+        Args:
+            delta (np.ndarray): Gradient from next layer, shape (output_dimension, sequence_length).
+            X (np.ndarray): Input tensor.
+
+        Returns:
+            dict: Gradients for weights, biases, and input.
+        """
         # Forward pass
-        Sa, Q, K, V, A, X_pos = self.compute_attention(X, switch=1)
+        Sa, Q, K, V, A, X_pos = self.compute(X, switch=1)
 
         dL_dV = delta @ A.T  # [d_out, n]
         dL_dA = V.T @ delta  # [n, n]
@@ -136,7 +166,7 @@ class AttentionHead:
         dL_dbeta_v = np.sum(dL_dV, axis=1, keepdims=True)  # [d_out, 1]
 
         dL_dX = (
-                self.w_q.T @ dL_dQ +  # [d, n]
+                self.w_q.T @ dL_dQ +  # [d_out, n]
                 self.w_k.T @ dL_dK +  # [d_out, n]
                 self.w_v.T @ dL_dV  # [d_out, n]
         )
@@ -151,11 +181,25 @@ class AttentionHead:
             'X': dL_dX
         }
 
-    def Head_Update(self, X, delta, learning_rate=0.01, beta1=0.9, beta2=0.999, epsilon=1e-8):
+    def update(self, X, delta, learning_rate=0.01, beta1=0.9, beta2=0.999, epsilon=1e-8):
+        """
+        Updates parameters using Adam optimizer.
+
+        Args:
+            X (np.ndarray): Input tensor.
+            delta (np.ndarray): Gradient from next layer.
+            learning_rate (float): Learning rate.
+            beta1 (float): First moment decay rate.
+            beta2 (float): Second moment decay rate.
+            epsilon (float): Small constant to avoid division by zero.
+
+        Returns:
+            np.ndarray: Gradient with respect to input X.
+        """
         self.t += 1
 
         # Get gradients from backprop
-        grads = self.attention_backprop(delta, X)
+        grads = self.backprop(delta, X)
 
         self.m_w_q = beta1 * self.m_w_q + (1 - beta1) * grads['w_q']
         self.v_w_q = beta2 * self.v_w_q + (1 - beta2) * (grads['w_q'] ** 2)
@@ -197,35 +241,69 @@ class AttentionHead:
 
 
 class AttentionLayer:
-    def __init__(self, embed_dimension, number_heads):
+    def __init__(self, embed_dimension: int, number_heads: int):
+        """
+        Multi-head attention layer composed of multiple AttentionHead instances.
+
+        Args:
+            embed_dimension (int): Total embedding dimension.
+            number_heads (int): Number of attention heads.
+        """
+        if embed_dimension % number_heads != 0:
+            raise ValueError("embed_dimension must be divisible by number_heads")
+
         self.embed_dimension = embed_dimension
         self.number_embeds = None
         self.number_heads = number_heads
 
         self.attention_list = None
 
-    def initialize_attention_layer(self):
+    def initialize(self):
+        """Initializes all attention heads."""
         output_dimension = int(self.embed_dimension / self.number_heads)
 
         attention_list = np.empty(self.number_heads, dtype=object)
 
         for i in range(self.number_heads):
             attention_list[i] = AttentionHead(self.embed_dimension, output_dimension)
-            attention_list[i].initialize_attention()
+            attention_list[i].initialize()
 
         self.attention_list = attention_list
 
-    def compute_attention_layer(self, X, mask_layer=True):
+    def compute(self, X: np.ndarray, mask_layer=True):
+        """
+        Applies multi-head attention.
+
+        Args:
+            X (np.ndarray): Input tensor of shape (embed_dimension, sequence_length).
+            mask_layer (bool): Whether to apply attention masking.
+
+        Returns:
+            np.ndarray: Output tensor after attention (same shape as input).
+        """
+        if X.shape[0] != self.embed_dimension:
+            raise ValueError("Input shape does not match embed_dimension")
+
         self.number_embeds = X.shape[1]
-        Sa_concatenated = self.attention_list[0].compute_attention(X, mask=mask_layer)
 
-        for i in range(1, self.number_heads):
-            temp_Sa = self.attention_list[i].compute_attention(X, mask=mask_layer)
-            Sa_concatenated = np.vstack((Sa_concatenated, temp_Sa))
+        outputs = [head.compute(X, mask=mask_layer) for head in self.attention_list]
+        return X + np.vstack(outputs)
 
-        return X + Sa_concatenated
+    def update(self, X, delta, learning_rate=0.01, beta1=0.9, beta2=0.999, epsilon=1e-8):
+        """
+        Backpropagates through all attention heads and updates parameters.
 
-    def Update(self, X, delta, learning_rate=0.01, beta1=0.9, beta2=0.999, epsilon=1e-8):
+        Args:
+            X (np.ndarray): Input tensor.
+            delta (np.ndarray): Output gradient from the next layer.
+            learning_rate (float): Learning rate.
+            beta1 (float): Adam beta1.
+            beta2 (float): Adam beta2.
+            epsilon (float): Small constant to avoid division by zero.
+
+        Returns:
+            np.ndarray: Gradient with respect to input X.
+        """
         output_dimension = int(self.embed_dimension / self.number_heads)
 
         dL_dX = np.zeros_like(X, dtype=np.float64)  # Initialize gradient accumulator
@@ -233,7 +311,7 @@ class AttentionLayer:
         for i in range(self.number_heads):
             delta_head = delta[i * output_dimension: (i + 1) * output_dimension, :]
 
-            dL_dX += self.attention_list[i].Head_Update(
+            dL_dX += self.attention_list[i].update(
                 X,
                 delta_head,
                 learning_rate=learning_rate,
