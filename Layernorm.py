@@ -107,10 +107,26 @@ class LayerNorm:
 
         return d_X, d_gamma, d_beta
 
+    def batchprop(self, X_set, delta_set):
+        d_X = [None]*len(X_set)
+        d_gamma = np.zeros_like(self.gamma)
+        d_beta = np.zeros_like(self.beta)
+
+        constant = 0
+        for i in range(len(X_set)):
+            c = X_set[i].shape[1]
+            X_temp, g_temp, b_temp = self.backprop(X_set[i], delta_set[i])
+            d_X[i] = X_temp
+            d_gamma += c*g_temp
+            d_beta += c*b_temp
+            constant += c
+
+        return d_X, d_gamma/constant, d_beta/constant
+
     def update(
             self,
-            X,  # List/array of input samples (column vectors)
-            delta,
+            X_set,  # List/array of input samples (column vectors)
+            delta_set,
             learning_rate=0.01,
             beta1=0.9,  # Adam: exponential decay rate for 1st moment estimates
             beta2=0.999,  # Adam: exponential decay rate for 2nd moment estimates
@@ -137,7 +153,7 @@ class LayerNorm:
         if self.gamma is None or self.beta is None:
             raise ValueError("LayerNorm must be initialized before calling update")
 
-        d_X, d_gamma, d_beta = self.backprop(X, delta)
+        d_X, d_gamma, d_beta = self.batchprop(X_set, delta_set)
         # L2 regularization
         if reg == "L2":
             d_gamma += l2_lambda * self.gamma

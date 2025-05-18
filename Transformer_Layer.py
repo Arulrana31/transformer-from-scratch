@@ -58,7 +58,7 @@ class Transformer_Layer:
 
         return value
 
-    def update(self, X, delta, learning_rate=0.01,
+    def update(self, X_set, delta_set, learning_rate=0.01,
                beta1=0.9,  # Adam: exponential decay rate for 1st moment estimates
                beta2=0.999,  # Adam: exponential decay rate for 2nd moment estimates
                epsilon=1e-8,  # Adam: small constant for numerical stability
@@ -80,18 +80,63 @@ class Transformer_Layer:
         Returns:
             np.ndarray: Updated gradient for backpropagation.
         """
-        if not isinstance(X, np.ndarray) or not isinstance(delta, np.ndarray):
-            raise TypeError("X and delta must be numpy.ndarray.")
         if learning_rate <= 0:
             raise ValueError("learning_rate must be positive.")
+        X_N1 = []
+        for X in X_set:
+            X_N1.append(self.Attention_Layer.compute(X))
+        X_NN = []
+        for X in X_N1:
+            X_NN.append(self.LayerNorm_Layer1.compute(X))
+        X_N2 = []
+        for X in X_NN:
+            X_N2.append(self.NeuralNetwork.compute(X))
 
-        delta = self.LayerNorm_Layer2.update(X, delta, learning_rate=learning_rate, beta1=beta1, beta2=beta2,
+        delta_set = self.LayerNorm_Layer2.update(X_N2, delta_set, learning_rate=learning_rate, beta1=beta1, beta2=beta2,
                                                        epsilon=epsilon, l2_lambda=lambda_, reg=reg)
-        delta = self.NeuralNetwork.update(X, delta, learning_rate=learning_rate, beta1=beta1, beta2=beta2,
+        delta_set = self.NeuralNetwork.update(X_NN, delta_set, learning_rate=learning_rate, beta1=beta1, beta2=beta2,
                                                   epsilon=epsilon, lambda_=lambda_, reg=reg)
-        delta = self.LayerNorm_Layer1.update(X, delta, learning_rate=learning_rate, beta1=beta1, beta2=beta2,
+        delta_set = self.LayerNorm_Layer1.update(X_N1, delta_set, learning_rate=learning_rate, beta1=beta1, beta2=beta2,
                                                        epsilon=epsilon, l2_lambda=lambda_, reg=reg)
-        delta = self.Attention_Layer.update(X, delta, learning_rate=learning_rate, beta1=beta1, beta2=beta2,
+        delta_set = self.Attention_Layer.update(X_set, delta_set, learning_rate=learning_rate, beta1=beta1, beta2=beta2,
                                             epsilon=epsilon)
+        return delta_set
 
-        return delta
+    def train(self,
+        X_train,  # List/array of input samples (column vectors)
+        delta,
+        epochs=10,  # Number of training passes
+        batch_size=1,  # Mini-batch size
+        learning_rate=0.01,
+        verbose=True,
+        beta1=0.9,  # Adam: exponential decay rate for 1st moment estimates
+        beta2=0.999,  # Adam: exponential decay rate for 2nd moment estimates
+        epsilon=1e-8,  # Adam: small constant for numerical stability
+        lambda_=1e-4,
+              ):
+
+        print("Training has started....") if verbose else None
+
+        for epoch in range(epochs):
+            if verbose:
+                print("Epoch {}/{}".format(epoch+1, epochs))
+            # Shuffle
+            combined = list(zip(X_train, delta))
+            np.random.shuffle(combined)  # Shuffles pairs in-place
+            X_shuffled, delta_shuffled = zip(*combined)  # Unpack into tuples
+
+            X_shuffled = list(X_shuffled)
+            delta_shuffled = list(delta_shuffled)
+
+            i = 0
+            while (i)*batch_size < len(X_train):
+                start = i*batch_size
+                end = min((i+1)*batch_size, len(X_train))
+                X_batch = X_shuffled[start:end]
+                delta_batch = delta_shuffled[start:end]
+
+                self.update(X_batch, delta_batch, learning_rate=learning_rate, beta1=beta1, beta2=beta2,epsilon=epsilon, lambda_=lambda_)
+                i += 1
+
+        print("Training has ended....") if verbose else None
+

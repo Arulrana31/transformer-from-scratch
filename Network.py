@@ -193,10 +193,20 @@ class Network:
             d_X
         )
 
+    def batchprop(self, X_set, delta_set):
+        d_X = [None]*len(X_set)
+        for i in range(len(X_set)):
+            _, _, d_X[i] = self.backprop(X_set[i], delta_set[i])
+        X_superset = np.hstack(X_set)
+        delta_superset = np.hstack(delta_set)
+        d_w, d_b, _ = self.backprop(X_superset, delta_superset)
+
+        return d_w, d_b, d_X
+
     def update(
             self,
-            X_train,  # List/array of input samples (column vectors)
-            delta,
+            X_set,  # List/array of input samples (column vectors)
+            delta_set,
             learning_rate=0.01,
             beta1=0.9,  # Adam: exponential decay rate for 1st moment estimates
             beta2=0.999,  # Adam: exponential decay rate for 2nd moment estimates
@@ -221,15 +231,13 @@ class Network:
             np.ndarray: Gradient w.r.t. the input.
         """
         assert self.layers is not None, "Network not initialized. Call initialize() first."
-
-        n = X_train.shape[1]
-        batch_size = X_train.shape[1]
+        X_superset = np.hstack(X_set)
+        delta_superset = np.hstack(delta_set)
+        n = batch_size = X_superset.shape[1]
 
         self.bias_correction += 1
 
-        X_used = X_train
-        delta_used = delta
-        batch_w, batch_b, d_X = self.backprop(X_used, delta_used)
+        batch_w, batch_b, d_X = self.batchprop(X_set, delta_set)
         for k in range(1, self.n_layers):
             if batch_w[k] is not None:  # Skip input layer
                 # Add L2 regularization term to gradient

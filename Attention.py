@@ -181,7 +181,48 @@ class AttentionHead:
             'X': dL_dX
         }
 
-    def update(self, X, delta, learning_rate=0.01, beta1=0.9, beta2=0.999, epsilon=1e-8):
+    def batchprop(self, X_set, delta_set):
+        """
+        Perform batch-wise backpropagation.
+
+        Args:
+            X_set (list of np.ndarray): List of input instances.
+            delta_set (list of np.ndarray): List of corresponding deltas.
+
+        Returns:
+            dict: Averaged gradients and list of input gradients.
+        """
+        if len(X_set) != len(delta_set):
+            raise ValueError("X_set and delta_set must have the same length")
+
+        # Initialize accumulators
+        grad_accumulator = {
+            'w_q': 0,
+            'w_k': 0,
+            'w_v': 0,
+            'beta_q': 0,
+            'beta_k': 0,
+            'beta_v': 0,
+        }
+        dX_list = []
+        total_tokens = 0
+
+        for X, delta in zip(X_set, delta_set):
+            grads = self.backprop(delta, X)
+            tokens = X.shape[1]
+            total_tokens += tokens
+            for key in grad_accumulator:
+                grad_accumulator[key] += grads[key] * tokens
+            dX_list.append(grads['X'])
+
+        # Average the gradients weighted by token count
+        for key in grad_accumulator:
+            grad_accumulator[key] /= total_tokens
+
+        grad_accumulator['X'] = dX_list
+        return grad_accumulator
+
+    def update(self, X_set, delta_set, learning_rate=0.01, beta1=0.9, beta2=0.999, epsilon=1e-8):
         """
         Updates parameters using Adam optimizer.
 
@@ -199,7 +240,7 @@ class AttentionHead:
         self.t += 1
 
         # Get gradients from backprop
-        grads = self.backprop(delta, X)
+        grads = self.batchprop(X_set, delta_set)
 
         self.m_w_q = beta1 * self.m_w_q + (1 - beta1) * grads['w_q']
         self.v_w_q = beta2 * self.v_w_q + (1 - beta2) * (grads['w_q'] ** 2)
@@ -289,7 +330,7 @@ class AttentionLayer:
         outputs = [head.compute(X, mask=mask_layer) for head in self.attention_list]
         return X + np.vstack(outputs)
 
-    def update(self, X, delta, learning_rate=0.01, beta1=0.9, beta2=0.999, epsilon=1e-8):
+    def update(self, X_set, delta_set, learning_rate=0.01, beta1=0.9, beta2=0.999, epsilon=1e-8):
         """
         Backpropagates through all attention heads and updates parameters.
 
@@ -306,18 +347,18 @@ class AttentionLayer:
         """
         output_dimension = int(self.embed_dimension / self.number_heads)
 
-        dL_dX = np.zeros_like(X, dtype=np.float64)  # Initialize gradient accumulator
-
+        delta_head = []
         for i in range(self.number_heads):
-            delta_head = delta[i * output_dimension: (i + 1) * output_dimension, :]
+            delta_head.append([d[i * output_dimension: (i + 1) * output_dimension, :]for d in delta_set])
 
-            dL_dX += self.attention_list[i].update(
-                X,
-                delta_head,
-                learning_rate=learning_rate,
-                beta1=beta1,
-                beta2=beta2,
-                epsilon=epsilon
-            )
+        dL_dX_list = [self.attention_list[i].update(X_set, delta_head[i],
+                                            learning_rate=learning_rate,
+                                            beta1=beta1,
+                                            beta2=beta2,
+                                            epsilon=epsilon) for i in range(self.number_heads)]
 
-        return dL_dX
+
+        # Now vertically stack each group
+        stacked_outputs = [np.sum(arrays, axis=0) for arrays in zip(*dL_dX_list)]
+
+        return stacked_outputs
