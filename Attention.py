@@ -3,7 +3,7 @@ from Functions import function
 
 
 class AttentionHead:
-    def __init__(self, embed_dimension, output_dimension):
+    def __init__(self, embed_dimension: int, output_dimension: int, mask: bool):
         """
         Initializes an AttentionHead.
 
@@ -14,6 +14,7 @@ class AttentionHead:
         self.embed_dimension = embed_dimension
         self.output_dimension = output_dimension
         self.maxlen = 512
+        self.mask = mask
 
         self.number_embeds = None
         self.pe = self._init_positional_encoding()
@@ -83,7 +84,7 @@ class AttentionHead:
 
         return pe.T  # [d_model, max_len]
 
-    def compute(self, X: np.ndarray, switch=0, position=True, mask=True):
+    def compute(self, X: np.ndarray, switch=0, position=True):
         """
         Computes the self-attention output.
 
@@ -114,7 +115,7 @@ class AttentionHead:
 
         dot_product = np.dot(Q.T, K) / np.sqrt(self.output_dimension)  # nxn
 
-        if mask:
+        if self.mask:
             mask_matrix = np.tri(n, dtype=bool)  # Lower-triangular boolean matrix (n × n)
             mask_matrix = np.where(mask_matrix, 0, -np.inf) # Upper triangle becomes minus infinity
             dot_product = mask_matrix + dot_product
@@ -282,7 +283,7 @@ class AttentionHead:
 
 
 class AttentionLayer:
-    def __init__(self, embed_dimension: int, number_heads: int):
+    def __init__(self, embed_dimension: int, number_heads: int, mask: bool):
         """
         Multi-head attention layer composed of multiple AttentionHead instances.
 
@@ -296,6 +297,7 @@ class AttentionLayer:
         self.embed_dimension = embed_dimension
         self.number_embeds = None
         self.number_heads = number_heads
+        self.mask = mask
 
         self.attention_list = None
 
@@ -306,12 +308,12 @@ class AttentionLayer:
         attention_list = np.empty(self.number_heads, dtype=object)
 
         for i in range(self.number_heads):
-            attention_list[i] = AttentionHead(self.embed_dimension, output_dimension)
+            attention_list[i] = AttentionHead(self.embed_dimension, output_dimension, self.mask)
             attention_list[i].initialize()
 
         self.attention_list = attention_list
 
-    def compute(self, X: np.ndarray, mask_layer=True):
+    def compute(self, X: np.ndarray):
         """
         Applies multi-head attention.
 
@@ -327,7 +329,7 @@ class AttentionLayer:
 
         self.number_embeds = X.shape[1]
 
-        outputs = [head.compute(X, mask=mask_layer) for head in self.attention_list]
+        outputs = [head.compute(X) for head in self.attention_list]
         return X + np.vstack(outputs)
 
     def update(self, X_set, delta_set, learning_rate=0.01, beta1=0.9, beta2=0.999, epsilon=1e-8):
